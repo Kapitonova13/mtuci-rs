@@ -21,5 +21,9 @@ path = "src/main4.rs"
 name = "main5"
 path = "src/main5.rs"
 
+[[bin]]
+name = "fizz_buzz"
+path = "src/FizzBuzz.rs"
+
 [dependencies]
 rand = "0.8.5"
