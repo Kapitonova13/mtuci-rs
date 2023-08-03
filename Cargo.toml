@@ -4,4 +4,5 @@ members = [
     "homework2",
     "homework4",
     "tokio",
+    "project",
 ]
