@@ -4,7 +4,7 @@ use serde::Deserialize;
 struct WeatherData {
     name: String,
     main: Main,
-    weather: Vec<Weather1>,
+    weather: Vec<Weather>,
     wind: Wind
 }
 
@@ -22,7 +22,7 @@ struct Main {
 }
 
 #[derive(Debug, Deserialize)]
-struct Weather1 {
+struct Weather {
     description: String,
 }
 
@@ -36,7 +36,7 @@ struct WeatherData1 {
 struct List {
     main: Main1,
     dt_txt: String,
-    weather: Vec<Weather>,
+    weather: Vec<Weather1>,
     wind: Wind1
 }
 
@@ -46,7 +46,7 @@ struct Wind1 {
 }
 
 #[derive(Debug, Deserialize)]
-struct Weather {
+struct Weather1 {
     description: String,
 }
 
@@ -71,18 +71,22 @@ type MyDialogue = Dialogue<State, InMemStorage<State>>;
 type HandlerResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 #[derive(Clone, Default)]
-pub enum State {
+enum State {
     #[default]
     Start,
+    Time { city: String,},
+    Now,
+    Week,
     Day,
+    City
 }
 
 #[derive(BotCommands, Clone)]
-#[command(rename_rule = "lowercase", description = "Этот бот поможет узнать прогноз погоды в Москве:\n-------------------")]
+#[command(rename_rule = "lowercase", description = "Этот бот поможет узнать прогноз погоды в выбранном населённом пункте:\n-------------------")]
 enum Command {
-    #[command(description = "Показать этот текст.")]
+    #[command(description = "Показать существующие команды.")]
     Help,
-    #[command(description = "Информация о боте.")]
+    #[command(description = "Информация o боте.")]
     Start,
     #[command(description = "Текущий прогноз погоды.")]
     WeatherNow,
@@ -90,14 +94,14 @@ enum Command {
     WeatherDay,
     #[command(description = "Прогноз погоды на день (выбрать время, в которое придёт прогноз).")]
     WeatherDayTime,
-    #[command(description = "Прогноз погоды на 5 дней.")]
+    #[command(description = "Прогноз погоды на 5 дней c шагом в 3 часа.")]
     WeatherWeek,
 }
 
 #[tokio::main]
 async fn main() {
     pretty_env_logger::init();
-    log::info!("Starting purchase bot...");
+    log::info!("Starting bot...");
 
     let bot = Bot::new("5800044949:AAFDNIwiky9IvEdpTUE7WNv44wPpbKa3Xy4");
 
@@ -115,53 +119,25 @@ fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'static>>
     let command_handler = teloxide::filter_command::<Command, _>()
         .branch(
             case![State::Start]
-                .branch(case![Command::Help].endpoint(help))
-                .branch(case![Command::Start].endpoint(start))
-                .branch(case![Command::WeatherNow].endpoint(get_weather_now))
-                .branch(case![Command::WeatherDay].endpoint(get_weather_day))
-                .branch(case![Command::WeatherDayTime].endpoint(time))
-                .branch(case![Command::WeatherWeek].endpoint(week)),
+            .branch(case![Command::Help].endpoint(help))
+            .branch(case![Command::Start].endpoint(start))
+            .branch(case![Command::WeatherNow].endpoint(city_now))
+            .branch(case![Command::WeatherDay].endpoint(city_day))
+            .branch(case![Command::WeatherDayTime].endpoint(city_time))
+            .branch(case![Command::WeatherWeek].endpoint(city_week)),
         );
 
     let message_handler = Update::filter_message()
         .branch(command_handler)
-        .branch(case![State::Day].endpoint(get_weather_day_time))
+        .branch(case![State::City].endpoint(get_city_time))
+        .branch(case![State::Time {city}].endpoint(get_weather_day_time))
+        .branch(case![State::Now].endpoint(get_weather_now))
+        .branch(case![State::Week].endpoint(week))
+        .branch(case![State::Day].endpoint(get_weather_day))
         .branch(dptree::endpoint(invalid_state));
 
     dialogue::enter::<Update, InMemStorage<State>, State, _>()
         .branch(message_handler)
-}
-
-async fn get_weather_now(bot: Bot, msg: Message) -> HandlerResult {
-    let city = "Moscow";
-    let token = "1905f5e079cf0e1a02a4fd8559212e49";
-    let metric = "metric";
-    let lang = "ru";
-   
-    let url = format!("http://api.openweathermap.org/data/2.5/weather?q={}&appid={}&units={}&lang={}", city, token, metric, lang);
-
-    let response: WeatherData = reqwest::get(&url).await?.json().await?;
-    bot.send_message(msg.chat.id, format!("Текущий прогноз погоды в городе {}\n-------------------\nТемпература: {}°C (ощущается как {}°C)\nМаксимальная температура: {}°C\nМинимальная температура: {}°C\nПогодные условия: {}\nСкорость ветра: {} м/с", response.name, response.main.temp, response.main.feels_like, response.main.temp_max, response.main.temp_min, response.weather[0].description, response.wind.speed)).await?;
-
-    Ok(())
-}
-
-async fn week(bot: Bot, msg: Message) -> HandlerResult {
-    let city = "Moscow";
-    let token = "1905f5e079cf0e1a02a4fd8559212e49";
-    let metric = "metric";
-    let lang = "ru";
-
-    let url = format!("http://api.openweathermap.org/data/2.5/forecast?q={}&appid={}&units={}&lang={}", city, token, metric, lang);
-
-    let week: WeatherData1 = reqwest::get(&url).await?.json().await?;
-
-    bot.send_message(msg.chat.id, format!("Прогноз погоды на 5 дней в городе {}", week.city.name)).await?;
-
-    for i in week.list {
-        bot.send_message(msg.chat.id, format!("-------------------\nДата {}\nТемпература: {}°C (ощущается как {}°C)\nПогодные условия: {}\nСкорость ветра: {} м/с", i.dt_txt, i.main.temp, i.main.feels_like, i.weather[0].description, i.wind.speed)).await?;
-    }
-    Ok(())
 }
 
 async fn help(bot: Bot, msg: Message) -> HandlerResult {
@@ -170,61 +146,139 @@ async fn help(bot: Bot, msg: Message) -> HandlerResult {
 }
 
 async fn start(bot: Bot, msg: Message) -> HandlerResult {
-    bot.send_message(msg.chat.id, "Хотите узнать прогноз погоды в Москве?\nВведите /help, чтобы узнать, какие команды существуют.").await?;
+    bot.send_message(msg.chat.id, "Хотите узнать прогноз погоды в вашем городе?\nВведите /help, чтобы узнать, какие команды существуют.").await?;
     Ok(())
 }
 
-async fn get_weather_day(bot: Bot, msg: Message) -> HandlerResult {
-    let city = "Moscow";
-    let token = "1905f5e079cf0e1a02a4fd8559212e49";
-    let metric = "metric";
-    let lang = "ru";
+async fn city_now(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerResult {
+    bot.send_message(msg.chat.id, "Выберите город, в котором хотите узнать текущий прогноз погоды.").await?;
+    dialogue.update(State::Now).await?;
+    Ok(())   
+}
 
-    let url = format!("http://api.openweathermap.org/data/2.5/forecast?q={}&appid={}&units={}&lang={}", city, token, metric, lang);
+async fn city_day(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerResult {
+    bot.send_message(msg.chat.id, "Выберите город, в котором хотите узнать прогноз погоды на день.").await?;
+    dialogue.update(State::Day).await?;
+    Ok(())   
+}
 
-    let weather1: WeatherData1 = reqwest::get(&url).await?.json().await?;
-    let a1 = weather1.list[0].main.temp;
-    let a2 = weather1.list[1].main.temp;
-    let a3 = weather1.list[2].main.temp;
-    let a4 = weather1.list[3].main.temp;
-    let a5 = weather1.list[4].main.temp;
-    let a6 = weather1.list[5].main.temp;
+async fn city_week(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerResult {
+    bot.send_message(msg.chat.id, "Выберите город, в котором хотите узнать прогноз погоды на 5 дней.").await?;
+    dialogue.update(State::Week).await?;
+    Ok(())   
+}
 
-    let t1 = &weather1.list[0].dt_txt;
-    let t2 = &weather1.list[1].dt_txt;
-    let t3 = &weather1.list[2].dt_txt;
-    let t4 = &weather1.list[3].dt_txt;
-    let t5 = &weather1.list[4].dt_txt;
-    let t6 = &weather1.list[5].dt_txt;
 
-    let w1 = &weather1.list[0].weather[0].description;
-    let w2 = &weather1.list[1].weather[0].description;
-    let w3 = &weather1.list[2].weather[0].description;
-    let w4 = &weather1.list[3].weather[0].description;
-    let w5 = &weather1.list[4].weather[0].description;
-    let w6 = &weather1.list[5].weather[0].description;
+async fn city_time(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerResult {
+    bot.send_message(msg.chat.id, "Выберите город, в котором хотите узнать прогноз погоды на день в определённое время.\nтолько UTC +3 (московское время)").await?;
+    dialogue.update(State::City).await?;
+    Ok(())   
+}
 
-    let f1 = weather1.list[0].main.feels_like;
-    let f2 = weather1.list[1].main.feels_like;
-    let f3 = weather1.list[2].main.feels_like;
-    let f4 = weather1.list[3].main.feels_like;
-    let f5 = weather1.list[4].main.feels_like;
-    let f6 = weather1.list[5].main.feels_like;
+async fn get_weather_now(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerResult {
+    match msg.text() {
+        Some(city) => {
+            let token = "1905f5e079cf0e1a02a4fd8559212e49";
+            let metric = "metric";
+            let lang = "ru";
+           
+            let url = format!("http://api.openweathermap.org/data/2.5/weather?q={}&appid={}&units={}&lang={}", city, token, metric, lang);
+            
+            let response: WeatherData = reqwest::get(&url).await?.json().await?;
+            bot.send_message(msg.chat.id, format!("Текущий прогноз погоды в городе {}\n-------------------\nТемпература: {}°C (ощущается как {}°C)\nМаксимальная температура: {}°C\nМинимальная температура: {}°C\nПогодные условия: {}\nСкорость ветра: {} м/с", response.name, response.main.temp, response.main.feels_like, response.main.temp_max, response.main.temp_min, response.weather[0].description, response.wind.speed)).await?;
+            dialogue.exit().await?;
+        }  
+        _ => {
+            bot.send_message(msg.chat.id, "Ошибка!").await?;
+        }
+    }
+    Ok(())
+}
 
-    let s1 = weather1.list[0].wind.speed;
-    let s2 = weather1.list[1].wind.speed;
-    let s3 = weather1.list[2].wind.speed;
-    let s4 = weather1.list[3].wind.speed;
-    let s5 = weather1.list[4].wind.speed;
-    let s6 = weather1.list[5].wind.speed;
+async fn week(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerResult {
+    match msg.text() {
+        Some(city) => {
+            let token = "1905f5e079cf0e1a02a4fd8559212e49";
+            let metric = "metric";
+            let lang = "ru";
+        
+            let url = format!("http://api.openweathermap.org/data/2.5/forecast?q={}&appid={}&units={}&lang={}", city, token, metric, lang);
+        
+            let week: WeatherData1 = reqwest::get(&url).await?.json().await?;
+        
+            bot.send_message(msg.chat.id, format!("Прогноз погоды на 5 дней в городе {}", week.city.name)).await?;
+        
+            for i in week.list {
+                bot.send_message(msg.chat.id, format!("-------------------\nДата {}\nТемпература: {}°C (ощущается как {}°C)\nПогодные условия: {}\nСкорость ветра: {} м/с", i.dt_txt, i.main.temp, i.main.feels_like, i.weather[0].description, i.wind.speed)).await?;
+            }
+            dialogue.exit().await?;
+        }
+        _ => {
+            bot.send_message(msg.chat.id, "Ошибка!").await?;
+        }
+    }
+   
+    Ok(())
+}
 
-    let k = weather1.city.name;
-
-    bot.send_message(msg.chat.id, format!("Прогноз погоды в городе {}\n-------------------\nДата {}\nТемпература: {}°C (ощущается как {}°C)\nПогодные условия: {}\nСкорость ветра: {} м/с\n-------------------\nДата {}\nТемпература: {}°C (ощущается как {}°C)\nПогодные условия: {}\nСкорость ветра: {} м/с\n-------------------\n\
-    Дата {}\nТемпература: {}°C (ощущается как {}°C)\nПогодные условия: {}\nСкорость ветра: {} м/с\n-------------------\nДата {}\nТемпература: {}°C (ощущается как {}°C)\nПогодные условия: {}\nСкорость ветра: {} м/с\n-------------------\n\
-    Дата {}\nТемпература: {}°C (ощущается как {}°C)\nПогодные условия: {}\nСкорость ветра: {} м/с\n-------------------\nДата {}\nТемпература: {}°C (ощущается как {}°C)\nПогодные условия: {}\nСкорость ветра: {} м/с", 
-    k, t1, a1, f1, w1, s1, t2, a2, f2, w2, s2, t3, a3, f3, w3, s3, t4, a4, f4, w4, s4, t5, a5, f5, w5, s5, t6, a6, f6, w6, s6)).await?;
-    
+async fn get_weather_day(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerResult {
+    match msg.text() {
+        Some(city) => {
+            let token = "1905f5e079cf0e1a02a4fd8559212e49";
+            let metric = "metric";
+            let lang = "ru";
+        
+            let url = format!("http://api.openweathermap.org/data/2.5/forecast?q={}&appid={}&units={}&lang={}", city, token, metric, lang);
+        
+            let weather1: WeatherData1 = reqwest::get(&url).await?.json().await?;
+            let a1 = weather1.list[0].main.temp;
+            let a2 = weather1.list[1].main.temp;
+            let a3 = weather1.list[2].main.temp;
+            let a4 = weather1.list[3].main.temp;
+            let a5 = weather1.list[4].main.temp;
+            let a6 = weather1.list[5].main.temp;
+        
+            let t1 = &weather1.list[0].dt_txt;
+            let t2 = &weather1.list[1].dt_txt;
+            let t3 = &weather1.list[2].dt_txt;
+            let t4 = &weather1.list[3].dt_txt;
+            let t5 = &weather1.list[4].dt_txt;
+            let t6 = &weather1.list[5].dt_txt;
+        
+            let w1 = &weather1.list[0].weather[0].description;
+            let w2 = &weather1.list[1].weather[0].description;
+            let w3 = &weather1.list[2].weather[0].description;
+            let w4 = &weather1.list[3].weather[0].description;
+            let w5 = &weather1.list[4].weather[0].description;
+            let w6 = &weather1.list[5].weather[0].description;
+        
+            let f1 = weather1.list[0].main.feels_like;
+            let f2 = weather1.list[1].main.feels_like;
+            let f3 = weather1.list[2].main.feels_like;
+            let f4 = weather1.list[3].main.feels_like;
+            let f5 = weather1.list[4].main.feels_like;
+            let f6 = weather1.list[5].main.feels_like;
+        
+            let s1 = weather1.list[0].wind.speed;
+            let s2 = weather1.list[1].wind.speed;
+            let s3 = weather1.list[2].wind.speed;
+            let s4 = weather1.list[3].wind.speed;
+            let s5 = weather1.list[4].wind.speed;
+            let s6 = weather1.list[5].wind.speed;
+        
+            let k = weather1.city.name;
+        
+            bot.send_message(msg.chat.id, format!("Прогноз погоды в городе {}\n-------------------\nДата {}\nТемпература: {}°C (ощущается как {}°C)\nПогодные условия: {}\nСкорость ветра: {} м/с\n-------------------\nДата {}\nТемпература: {}°C (ощущается как {}°C)\nПогодные условия: {}\nСкорость ветра: {} м/с\n-------------------\n\
+            Дата {}\nТемпература: {}°C (ощущается как {}°C)\nПогодные условия: {}\nСкорость ветра: {} м/с\n-------------------\nДата {}\nТемпература: {}°C (ощущается как {}°C)\nПогодные условия: {}\nСкорость ветра: {} м/с\n-------------------\n\
+            Дата {}\nТемпература: {}°C (ощущается как {}°C)\nПогодные условия: {}\nСкорость ветра: {} м/с\n-------------------\nДата {}\nТемпература: {}°C (ощущается как {}°C)\nПогодные условия: {}\nСкорость ветра: {} м/с", 
+            k, t1, a1, f1, w1, s1, t2, a2, f2, w2, s2, t3, a3, f3, w3, s3, t4, a4, f4, w4, s4, t5, a5, f5, w5, s5, t6, a6, f6, w6, s6)).await?;
+            
+            dialogue.exit().await?;
+        }  
+        _ => {
+            bot.send_message(msg.chat.id, "Ошибка!").await?;
+        }
+    }
     Ok(())
 }
 
@@ -234,18 +288,31 @@ async fn invalid_state(bot: Bot, msg: Message) -> HandlerResult {
     Ok(())
 }
 
-async fn time(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerResult {
-    bot.send_message(msg.chat.id, "Выберите время, в которое придёт прогноз погоды. (0-23)").await?;
-    dialogue.update(State::Day).await?;
-    Ok(())   
+async fn get_city_time(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerResult {
+    match msg.text() {
+        Some(city) => {
+            let token: &str = "1905f5e079cf0e1a02a4fd8559212e49";
+            let metric = "metric";
+            let lang = "ru";
+        
+            let url = format!("http://api.openweathermap.org/data/2.5/forecast?q={}&appid={}&units={}&lang={}", city, token, metric, lang);
+            let weather1: WeatherData1 = reqwest::get(&url).await?.json().await?;
+            let k = weather1.city.name;
+            bot.send_message(msg.chat.id, format!("Выбран город {k}.\nВыберите время, в которое придёт прогноз погоды. (0-23)\nтолько UTC +3 (московское время) ")).await?;
+            dialogue.update(State::Time { city: city.into() }).await?;
+        }  
+        _ => {
+            bot.send_message(msg.chat.id, "Ошибка!").await?;
+        }
+    }
+    Ok(())
 }
 
 use chrono::{Timelike, Utc};
 use std::thread;
 use std::time::Duration;
-async fn get_weather_day_time(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerResult {
-    let city = "Moscow";
-    let token = "1905f5e079cf0e1a02a4fd8559212e49";
+async fn get_weather_day_time(bot: Bot, dialogue: MyDialogue, city: String, msg: Message) -> HandlerResult {
+    let token  = "1905f5e079cf0e1a02a4fd8559212e49";
     let metric = "metric";
     let lang = "ru";
 
@@ -291,8 +358,18 @@ async fn get_weather_day_time(bot: Bot, dialogue: MyDialogue, msg: Message) -> H
 
     match msg.text().map(|text| text.parse::<u32>()) {
         Some(Ok(time)) => {
-            bot.send_message(msg.chat.id,format!("Прогноз погоды придёт в {}:00.", time)).await?;
             loop {
+                if time > 23 {
+                    bot.send_message(msg.chat.id,format!("Необходимо ввести время от 0 до 23! Попробуйте снова.\n/weatherdaytime" )).await?;
+                    break;
+                }
+                else {
+                    bot.send_message(msg.chat.id,format!("Прогноз погоды придёт в {}:00.", time)).await?;
+                    break;
+                }}
+            loop {
+                if time > 23 {
+                    break;}
                 let now = Utc::now();
                 let moscow_time = now.with_timezone(&chrono_tz::Europe::Moscow);
                     
